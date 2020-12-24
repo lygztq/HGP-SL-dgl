@@ -1,0 +1,7 @@
+# IDE/editors
+.vscode/
+
+# tests
+test.py
+
+__pycache__/
