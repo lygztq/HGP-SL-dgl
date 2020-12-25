@@ -3,22 +3,35 @@ An original implementation of sparsemax (Martins & Astudillo, 2016) is available
 https://github.com/OpenNMT/OpenNMT-py/blob/master/onmt/modules/sparse_activations.py.
 See `From Softmax to Sparsemax: A Sparse Model of Attention and Multi-Label Classification, ICML 2016`
 for detailed description.
+
+Here we implement a graph-edge version of sparsemax where we perform sparsemax for all edges
+with the same node as end-node in graphs.
 """
-from dgl.base import ALL, is_all
-from dgl.backend import astype
-from dgl.heterograph_index import HeteroGraphIndex
-import torch
-from torch import Tensor
 import dgl
-from dgl.sparse import _gspmm, _gsddmm
-# from dgl.ops import gspmm, gsddmm
+import torch
+from dgl.backend import astype
+from dgl.base import ALL, is_all
+from dgl.heterograph_index import HeteroGraphIndex
+from dgl.sparse import _gsddmm, _gspmm
+from torch import Tensor
 from torch.autograd import Function
 
 
 def _neighbor_sort(scores:Tensor, end_n_ids:Tensor, in_degrees:Tensor, cum_in_degrees:Tensor):
+    """Sort edge scores for each node"""
     num_nodes, max_in_degree = in_degrees.size(0), int(in_degrees.max().item())
     
-    # compute the index for dense score matrix with size (N x D_{max})
+    # Compute the index for dense score matrix with size (N x D_{max})
+    # Note that the end_n_ids here is the end_node tensor in dgl graph,
+    # which is not grouped by its node id (i.e. in this form: 0,0,1,1,1,...,N,N).
+    # Thus here we first sort the end_node tensor to make it easier to compute
+    # indexs in dense edge score matrix. Since we will need the original order
+    # for following gspmm and gsddmm operations, we also keep the reverse mapping 
+    # (the reverse_perm) here.
+    end_n_ids, perm = torch.sort(end_n_ids)
+    scores = scores[perm]
+    _, reverse_perm = torch.sort(perm)
+
     index = torch.arange(end_n_ids.size(0), dtype=torch.long, device=scores.device)
     index = (index - cum_in_degrees[end_n_ids]) + (end_n_ids * max_in_degree)
     index = index.long()
@@ -38,20 +51,21 @@ def _neighbor_sort(scores:Tensor, end_n_ids:Tensor, in_degrees:Tensor, cum_in_de
     cumsum_sorted_scores = cumsum_sorted_dense_scores[valid_mask]
     arange_vec = arange_vec[valid_mask]
 
-    return sorted_scores, cumsum_sorted_scores, arange_vec
+    return sorted_scores, cumsum_sorted_scores, arange_vec, reverse_perm
 
 
 def _threshold_and_support(gidx:HeteroGraphIndex, scores:Tensor, end_n_ids:Tensor):
+    """Find the threshold for each node and its edges"""
     in_degrees = _gspmm(gidx, "copy_rhs", "sum", None, torch.ones_like(scores))[0]
     cum_in_degrees = torch.cat([in_degrees.new_zeros(1), in_degrees.cumsum(dim=0)[:-1]], dim=0)
     
-    sorted_scores, cumsum_scores, rhos = _neighbor_sort(scores, end_n_ids, in_degrees, cum_in_degrees)
+    sorted_scores, cumsum_scores, rhos, reverse_perm = _neighbor_sort(scores, end_n_ids, 
+                                                                      in_degrees, cum_in_degrees)
     cumsum_scores = cumsum_scores - 1.
     support = rhos * sorted_scores > cumsum_scores
+    support = support[reverse_perm]
 
-    gidx.reverse()
     support_size = _gspmm(gidx, "copy_rhs", "sum", None, support.float())[0] #
-    gidx.reverse()
     support_size = support_size.long()
     idx = support_size + cum_in_degrees - 1
     tau = cumsum_scores.gather(0, idx.long())
@@ -61,7 +75,6 @@ def _threshold_and_support(gidx:HeteroGraphIndex, scores:Tensor, end_n_ids:Tenso
 
 
 class EdgeSparsemax(Function):
-    
     @staticmethod
     def forward(ctx, gidx:HeteroGraphIndex, scores:Tensor, 
                 eids:Tensor, end_n_ids:Tensor, norm_by:str):
@@ -75,6 +88,7 @@ class EdgeSparsemax(Function):
         scores_max = _gspmm(gidx, "copy_rhs", "max", None, scores)[0]
         scores = _gsddmm(gidx, "sub", scores, scores_max, "e", "v")
 
+        # find threshold for each node and perform ReLU(u-t(u)) operation.
         tau, supp_size = _threshold_and_support(gidx, scores, end_n_ids)
         out = torch.clamp(_gsddmm(gidx, "sub", scores, tau, "e", "v"), min=0)
         ctx.backward_cache = gidx
@@ -86,8 +100,11 @@ class EdgeSparsemax(Function):
         gidx = ctx.backward_cache
         supp_size, out = ctx.saved_tensors
         grad_in = grad_out.clone()
+
+        # grad for ReLU
         grad_in[out == 0] = 0
 
+        # dL/dv_i = dL/do_i - 1/k \sum_{j=1}^k dL/do_j
         v_hat = _gspmm(gidx, "copy_rhs", "sum", None, grad_in)[0] / supp_size.to(out.dtype)
         grad_in_modify = _gsddmm(gidx, "sub", grad_in, v_hat, "e", "v")
         grad_in = torch.where(out != 0, grad_in_modify, grad_in)
@@ -96,21 +113,19 @@ class EdgeSparsemax(Function):
 
 
 def edge_sparsemax(graph:dgl.DGLGraph, logits, eids=ALL, norm_by="dst"):
-    row, _ = graph.all_edges(order="srcdst")
+    row, col = graph.all_edges(order="srcdst")
+    assert norm_by in ["dst", "src"]
+    end_n_ids = col if norm_by == "dst" else row
     if not is_all(eids):
         eids = astype(eids, graph.idtype)
-        row = row[eids]
+        end_n_ids = end_n_ids[eids]
     return EdgeSparsemax.apply(graph._graph, logits,
-                               eids, row, norm_by)
+                               eids, end_n_ids, norm_by)
 
 
-if __name__ == "__main__":
-    from test_utils import fake_data
-    g1 = fake_data(2, 2)
-    g2 = fake_data(3, 2)
-    g = dgl.batch([g1, g2])
-
-    # scores = torch.randn((g.num_edges(),))
-    scores = torch.arange(1, g.num_edges() + 1)
-    res = edge_sparsemax(g, scores)
-    print(res)
+class EdgeSparsemaxLayer(torch.nn.Module):
+    def __init__(self):
+        super(EdgeSparsemaxLayer, self).__init__()
+    
+    def forward(self, graph, logits, eids=ALL, norm_by="dst"):
+        return edge_sparsemax(graph, logits, eids, norm_by)
