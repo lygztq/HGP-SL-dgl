@@ -12,7 +12,7 @@ from dgl.data import LegacyTUDataset
 from torch.utils.data import random_split
 
 from dataloader import GraphDataLoader
-from networks import Model
+from networks import SimpleModel, Model
 from utils import get_stats
 
 
@@ -31,6 +31,8 @@ def parse_args():
                         help="pooling ratio")
     parser.add_argument("--hid_dim", type=int, default=128,
                         help="hidden size")
+    parser.add_argument("--conv_layers", type=int, default=3,
+                        help="number of conv layers")
     parser.add_argument("--dropout", type=float, default=0.0,
                         help="dropout ratio")
     parser.add_argument("--lamb", type=float, default=1.0,
@@ -122,17 +124,20 @@ def main(args):
     num_test = len(dataset) - num_val - num_training
     train_set, val_set, test_set = random_split(dataset, [num_training, num_val, num_test])
 
-    train_loader = GraphDataLoader(train_set, batch_size=args.batch_size, shuffle=True, num_workers=0)
-    val_loader = GraphDataLoader(val_set, batch_size=args.batch_size, num_workers=0)
-    test_loader = GraphDataLoader(test_set, batch_size=args.batch_size, num_workers=0)
+    train_loader = GraphDataLoader(train_set, batch_size=args.batch_size, shuffle=True, num_workers=6)
+    val_loader = GraphDataLoader(val_set, batch_size=args.batch_size, num_workers=2)
+    test_loader = GraphDataLoader(test_set, batch_size=args.batch_size, num_workers=2)
 
     device = torch.device(args.device)
     
     # Step 2: Create model =================================================================== #
     num_feature, num_classes, _ = dataset.statistics()
 
+    # model = SimpleModel(in_feat=num_feature, out_feat=num_classes, hid_feat=args.hid_dim,
+    #                     dropout=args.dropout, pool_ratio=args.pool_ratio, lamb=args.lamb).to(device)
     model = Model(in_feat=num_feature, out_feat=num_classes, hid_feat=args.hid_dim,
-                  dropout=args.dropout, pooling_ratio=args.pool_ratio, lamb=args.lamb).to(device)
+                  conv_layers=args.conv_layers, dropout=args.dropout, pool_ratio=args.pool_ratio,
+                  lamb=args.lamb).to(device)
     args.num_feature = int(num_feature)
     args.num_classes = int(num_classes)
 

@@ -8,7 +8,7 @@ from torch.nn import Parameter
 import torch.nn.functional as F
 import dgl.function as fn
 from dgl.ops import edge_softmax
-from dgl.nn import GraphConv
+from dgl.nn import GraphConv, AvgPooling, MaxPooling
 
 from functions import edge_sparsemax
 from utils import get_batch_id, topk
@@ -180,3 +180,26 @@ class HGPSLPool(nn.Module):
             torch.cuda.empty_cache()
 
         return pool_graph, feat, e_feat, perm
+
+
+class ConvPoolReadout(torch.nn.Module):
+    def __init__(self, in_feat:int, out_feat:int, pool_ratio=0.8,
+                 sample:bool=False, sparse:bool=True, sl:bool=True,
+                 lamb:float=1., pool:bool=True):
+        super(ConvPoolReadout, self).__init__()
+        self.use_pool = pool
+        self.conv = WeightedGraphConv(in_feat, out_feat)
+        if pool:
+            self.pool = HGPSLPool(out_feat, ratio=pool_ratio, sparse=sparse,
+                                  sample=sample, sl=sl, lamb=lamb)
+        else:
+            self.pool = None
+        self.avgpool = AvgPooling()
+        self.maxpool = MaxPooling()
+
+    def forward(self, graph, feature, e_feat=None):
+        out = F.relu(self.conv(graph, feature, e_feat))
+        if self.use_pool:
+            graph, out, e_feat, _ = self.pool(graph, out, e_feat)
+        readout = torch.cat([self.avgpool(graph, out), self.maxpool(graph, out)], dim=-1)
+        return graph, out, e_feat, readout
