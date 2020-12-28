@@ -180,6 +180,7 @@ if __name__ == "__main__":
     for i in range(args.num_trials):
         print("Trial {}/{}".format(i + 1, args.num_trials))
         acc, train_time = main(args)
+        torch.cuda.empty_cache() # some problem in DGL-pytorch memory allocation
         res.append(acc)
         train_times.append(train_time)
 
