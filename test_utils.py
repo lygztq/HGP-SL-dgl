@@ -1,6 +1,7 @@
 import torch
 import dgl
 
+
 def generate_adj_matrix(num_nodes, symmetric=True, sparsity=0.5, connected=True):
     """Generate a adjacency matrix (in dense format) randomly.
     
@@ -28,7 +29,9 @@ def generate_adj_matrix(num_nodes, symmetric=True, sparsity=0.5, connected=True)
 def fake_data(num_nodes, num_features, sparsity=0.5, one_hot=False, 
               directed=False, weighted=False, with_label=False, label_dim=None,
               add_self_loop=False, device="cpu"):
-    r"""Generate a fake graph data for test or debug.
+    r"""Generate a fake graph data for test or debug. For DGL, the node feature
+    is named as ndata['x'], the node label is named as ndata['y'] and edge weight is named as 
+    ndata['weight']
     Args:
         num_nodes (int): The number of nodes in this graph.
         num_features (int): The dimension of node features.

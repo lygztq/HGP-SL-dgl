@@ -50,7 +50,7 @@ class Model(torch.nn.Module):
         n_feat = F.relu(self.conv3(graph, n_feat, e_feat))
         final_readout = final_readout + torch.cat([self.avg_pool(graph, n_feat), self.max_pool(graph, n_feat)], dim=-1)
 
-        n_feat = F.relu(self.lin1(n_feat))
+        n_feat = F.relu(self.lin1(final_readout))
         n_feat = F.dropout(n_feat, p=self.dropout, training=self.training)
         n_feat = F.relu(self.lin2(n_feat))
         n_feat = F.dropout(n_feat, p=self.dropout, training=self.training)

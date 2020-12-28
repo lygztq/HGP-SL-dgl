@@ -175,6 +175,7 @@ class HGPSLPool(nn.Module):
             e_feat = weights
             row, col = torch.nonzero(dense_adj).t().contiguous()
             pool_graph = dgl.graph((row, col))
+            pool_graph.set_batch_num_nodes(next_batch_num_nodes)
             del dense_adj
             torch.cuda.empty_cache()
 

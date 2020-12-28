@@ -3,6 +3,10 @@
 
 # tests
 test.py
-_dev_test.py
+dev_test.py
 
+# python
 __pycache__/
+
+# dataset
+dataset/
