@@ -54,7 +54,7 @@ def _neighbor_sort(scores:Tensor, end_n_ids:Tensor, in_degrees:Tensor, cum_in_de
     return sorted_scores, cumsum_sorted_scores, arange_vec, reverse_perm
 
 
-def _threshold_and_support(gidx:HeteroGraphIndex, scores:Tensor, end_n_ids:Tensor):
+def _threshold_and_support_graph(gidx:HeteroGraphIndex, scores:Tensor, end_n_ids:Tensor):
     """Find the threshold for each node and its edges"""
     in_degrees = _gspmm(gidx, "copy_rhs", "sum", None, torch.ones_like(scores))[0]
     cum_in_degrees = torch.cat([in_degrees.new_zeros(1), in_degrees.cumsum(dim=0)[:-1]], dim=0)
@@ -65,7 +65,7 @@ def _threshold_and_support(gidx:HeteroGraphIndex, scores:Tensor, end_n_ids:Tenso
     support = rhos * sorted_scores > cumsum_scores
     support = support[reverse_perm]
 
-    support_size = _gspmm(gidx, "copy_rhs", "sum", None, support.float())[0] #
+    support_size = _gspmm(gidx, "copy_rhs", "sum", None, support.float())[0]
     support_size = support_size.long()
     idx = support_size + cum_in_degrees - 1
     tau = cumsum_scores.gather(0, idx.long())
@@ -74,7 +74,7 @@ def _threshold_and_support(gidx:HeteroGraphIndex, scores:Tensor, end_n_ids:Tenso
     return tau, support_size
 
 
-class EdgeSparsemax(Function):
+class EdgeSparsemaxFunction(Function):
     @staticmethod
     def forward(ctx, gidx:HeteroGraphIndex, scores:Tensor, 
                 eids:Tensor, end_n_ids:Tensor, norm_by:str):
@@ -89,7 +89,7 @@ class EdgeSparsemax(Function):
         scores = _gsddmm(gidx, "sub", scores, scores_max, "e", "v")
 
         # find threshold for each node and perform ReLU(u-t(u)) operation.
-        tau, supp_size = _threshold_and_support(gidx, scores, end_n_ids)
+        tau, supp_size = _threshold_and_support_graph(gidx, scores, end_n_ids)
         out = torch.clamp(_gsddmm(gidx, "sub", scores, tau, "e", "v"), min=0)
         ctx.backward_cache = gidx
         ctx.save_for_backward(supp_size, out)
@@ -119,13 +119,86 @@ def edge_sparsemax(graph:dgl.DGLGraph, logits, eids=ALL, norm_by="dst"):
     if not is_all(eids):
         eids = astype(eids, graph.idtype)
         end_n_ids = end_n_ids[eids]
-    return EdgeSparsemax.apply(graph._graph, logits,
+    return EdgeSparsemaxFunction.apply(graph._graph, logits,
                                eids, end_n_ids, norm_by)
 
 
-class EdgeSparsemaxLayer(torch.nn.Module):
+class EdgeSparsemax(torch.nn.Module):
     def __init__(self):
-        super(EdgeSparsemaxLayer, self).__init__()
+        super(EdgeSparsemax, self).__init__()
     
     def forward(self, graph, logits, eids=ALL, norm_by="dst"):
         return edge_sparsemax(graph, logits, eids, norm_by)
+
+
+def _make_ix_like(input, dim=0):
+    d = input.size(dim)
+    rho = torch.arange(1, d + 1, device=input.device, dtype=input.dtype)
+    view = [1] * input.dim()
+    view[0] = -1
+    return rho.view(view).transpose(0, dim)
+
+
+def _threshold_and_support(input, dim=0):
+    """Sparsemax building block: compute the threshold
+    Args:
+        input: any dimension
+        dim: dimension along which to apply the sparsemax
+    Returns:
+        the threshold value
+    """
+
+    input_srt, _ = torch.sort(input, descending=True, dim=dim)
+    input_cumsum = input_srt.cumsum(dim) - 1
+    rhos = _make_ix_like(input, dim)
+    support = rhos * input_srt > input_cumsum
+
+    support_size = support.sum(dim=dim).unsqueeze(dim)
+    tau = input_cumsum.gather(dim, support_size - 1)
+    tau /= support_size.to(input.dtype)
+    return tau, support_size
+
+
+class SparsemaxFunction(Function):
+
+    @staticmethod
+    def forward(ctx, input, dim=0):
+        """sparsemax: normalizing sparse transform (a la softmax)
+        Parameters:
+            input (Tensor): any shape
+            dim: dimension along which to apply sparsemax
+        Returns:
+            output (Tensor): same shape as input
+        """
+        ctx.dim = dim
+        max_val, _ = input.max(dim=dim, keepdim=True)
+        input -= max_val  # same numerical stability trick as for softmax
+        tau, supp_size = _threshold_and_support(input, dim=dim)
+        output = torch.clamp(input - tau, min=0)
+        ctx.save_for_backward(supp_size, output)
+        return output
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        supp_size, output = ctx.saved_tensors
+        dim = ctx.dim
+        grad_input = grad_output.clone()
+        grad_input[output == 0] = 0
+
+        v_hat = grad_input.sum(dim=dim) / supp_size.to(output.dtype).squeeze()
+        v_hat = v_hat.unsqueeze(dim)
+        grad_input = torch.where(output != 0, grad_input - v_hat, grad_input)
+        return grad_input, None
+
+
+def sparsemax(input, dim=0):
+    return SparsemaxFunction.apply(input, dim)
+
+
+class Sparsemax(torch.nn.Module):
+    def __init__(self, dim=0):
+        super(Sparsemax, self).__init__()
+        self.dim = dim
+
+    def forward(self, input):
+        return sparsemax(input, self.dim)

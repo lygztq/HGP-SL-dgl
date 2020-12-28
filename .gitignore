@@ -3,5 +3,6 @@
 
 # tests
 test.py
+_dev_test.py
 
 __pycache__/
