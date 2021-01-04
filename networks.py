@@ -9,7 +9,7 @@ class SimpleModel(torch.nn.Module):
     """Simplified version of Model. It has fixed number of layers (3)."""
     def __init__(self, in_feat:int, out_feat:int, hid_feat:int,
                  dropout:float=0.0, pool_ratio:float=0.5,
-                 sample:bool=False, sparse:bool=True, sl:bool=True,
+                 sample:bool=True, sparse:bool=True, sl:bool=True,
                  lamb:float=1.):
         super(SimpleModel, self).__init__()
         self.in_feat = in_feat

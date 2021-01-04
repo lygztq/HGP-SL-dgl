@@ -109,6 +109,7 @@ class EdgeSparsemaxFunction(Function):
         v_hat = _gspmm(gidx, "copy_rhs", "sum", None, grad_in)[0] / supp_size.to(out.dtype)
         grad_in_modify = _gsddmm(gidx, "sub", grad_in, v_hat, "e", "v")
         grad_in = torch.where(out != 0, grad_in_modify, grad_in)
+        del gidx
         torch.cuda.empty_cache()
         
         return None, grad_in, None, None, None

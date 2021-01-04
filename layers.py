@@ -2,6 +2,7 @@ import logging
 
 import dgl
 import dgl.function as fn
+import numpy
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -10,16 +11,10 @@ from dgl.nn import AvgPooling, GraphConv, MaxPooling
 from dgl.ops import edge_softmax
 from torch import Tensor
 from torch.nn import Parameter
+import scipy.sparse
 
 from functions import edge_sparsemax
 from utils import get_batch_id, topk
-
-
-def _khop_union_graph(graph, k):
-    # pyg use spspmm here, however dgl has no
-    # efficient way to implement this function.
-    # Stub here.
-    pass
 
 
 class WeightedGraphConv(GraphConv):
@@ -139,7 +134,7 @@ class HGPSLPool(nn.Module):
     torch.Tensor
         Permutation index
     """
-    def __init__(self, in_feat:int, ratio=0.8, sample=False, 
+    def __init__(self, in_feat:int, ratio=0.8, sample=True, 
                  sym_score_norm=True, sparse=True, sl=True,
                  lamb=1.0, negative_slop=0.2, k_hop=3):
         super(HGPSLPool, self).__init__()
@@ -151,12 +146,6 @@ class HGPSLPool(nn.Module):
         self.lamb = lamb
         self.negative_slop = negative_slop
         self.k_hop = k_hop
-
-        # TODO: support sample method
-        if self.sample:
-            logging.warning("Currently we do not support sample method,"
-                            "use complete graph instead...")
-            self.sample = False
 
         self.att = Parameter(torch.Tensor(1, self.in_feat * 2))
         self.calc_info_score = NodeInfoScoreLayer(sym_norm=sym_score_norm)
@@ -178,6 +167,7 @@ class HGPSLPool(nn.Module):
                                           batch_num_nodes)
         feat = feat[perm]
         graph.edata["e"] = e_feat
+        raw_e_feat = e_feat
         pool_graph = dgl.node_subgraph(graph, perm)
         e_feat = pool_graph.edata.pop("e")
         pool_graph.set_batch_num_nodes(next_batch_num_nodes)
@@ -193,9 +183,59 @@ class HGPSLPool(nn.Module):
             # pair of nodes is time consuming. To accelerate this process,
             # we sample it's K-Hop neighbors for each node and then learn the
             # edge weights between them.
+            
+            # first build multi-hop graph
+            row, col = graph.all_edges()
+            num_nodes = graph.num_nodes()
 
-            # Note: k-hop graph here is from original graph, not pooled graph.
-            pass
+            scipy_adj = scipy.sparse.coo_matrix((raw_e_feat, (row, col)), shape=(num_nodes, num_nodes))
+            for _ in range(self.k_hop):
+                scipy_adj = scipy_adj ** 2 + scipy_adj
+            row, col = scipy_adj.nonzero()
+            row = torch.tensor(row, dtype=torch.long, device=graph.device)
+            col = torch.tensor(col, dtype=torch.long, device=graph.device)
+            e_feat = torch.tensor(scipy_adj.data, dtype=torch.float, device=feat.device)
+
+            # perform pooling on multi-hop graph
+            mask = perm.new_full((num_nodes, ), -1)
+            i = torch.arange(perm.size(0), dtype=torch.long, device=perm.device)
+            mask[perm] = i
+            row, col = mask[row], mask[col]
+            mask = (row >=0 ) & (col >= 0)
+            row, col = row[mask], col[mask]
+            e_feat = e_feat[mask]
+
+            # add remaining self loops
+            mask = row != col
+            loop_index = torch.arange(0, num_nodes, dtype=row.dtype, device=row.device)
+            row, col = row[mask], col[mask]
+            row = torch.cat([row, loop_index], dim=0)
+            col = torch.cat([col, loop_index], dim=0)
+            inv_mask = ~mask
+            loop_weight = torch.full((num_nodes, ), 0, dtype=e_feat.dtype, device=e_feat.device)
+            remaining_e_feat = e_feat[inv_mask]
+            if remaining_e_feat.numel() > 0:
+                loop_weight[row[inv_mask]] = remaining_e_feat
+            e_feat = torch.cat([e_feat[mask], loop_weight], dim=0)
+
+            # attention scores
+            weights = (torch.cat([feat[row], feat[col]], dim=1) * self.att).sum(dim=-1)
+            weights = F.leaky_relu(weights, self.negative_slop) + e_feat * self.lamb
+            
+            # sl and normalization
+            sl_graph = dgl.graph((row, col))
+            if self.sparse:
+                weights = edge_sparsemax(sl_graph, weights)
+            else:
+                weights = edge_softmax(sl_graph, weights)
+            
+            # get final graph
+            mask = torch.abs(weights) > 1e-9
+            row, col = row[mask], col[mask]
+            weights = weights[mask]
+            pool_graph = dgl.graph((row, col))
+            pool_graph.set_batch_num_nodes(next_batch_num_nodes)
+            e_feat = weights
 
         else: 
             # Learning the possible edge weights between each pair of
@@ -234,10 +274,9 @@ class HGPSLPool(nn.Module):
                 weights = edge_softmax(complete_graph, weights)
 
             # get new e_feat and graph structure, clean up.
-            dense_adj[row, col] = weights
-            weights = weights[weights != 0]
+            mask = torch.abs(weights) > 1e-9
+            row, col, weights = row[mask], col[mask], weights[mask]
             e_feat = weights
-            row, col = torch.nonzero(dense_adj).t().contiguous()
             pool_graph = dgl.graph((row, col))
             pool_graph.set_batch_num_nodes(next_batch_num_nodes)
             del dense_adj

@@ -23,6 +23,8 @@ def parse_args():
                         help="DD/PROTEINS/NCI1/NCI109/Mutagenicity/ENZYMES")
     parser.add_argument("--batch_size", type=int, default=512,
                         help="batch size")
+    parser.add_argument("--sample", type=str, default="true",
+                        help="use sample method")
     parser.add_argument("--lr", type=float, default=1e-3,
                         help="learning rate")
     parser.add_argument("--weight_decay", type=float, default=1e-3,
@@ -71,6 +73,12 @@ def parse_args():
     name = "Data={}_Hidden={}_Pool={}_WeightDecay={}_Lr={}.log".format(
         args.dataset, args.hid_dim, args.pool_ratio, args.weight_decay, args.lr)
     args.output_path = os.path.join(args.output_path, name)
+
+    # bool args
+    if args.sample.lower() == "true":
+        args.sample = True
+    else:
+        args.sample = False
 
     return args
 
@@ -137,7 +145,7 @@ def main(args):
     #                     dropout=args.dropout, pool_ratio=args.pool_ratio, lamb=args.lamb).to(device)
     model = Model(in_feat=num_feature, out_feat=num_classes, hid_feat=args.hid_dim,
                   conv_layers=args.conv_layers, dropout=args.dropout, pool_ratio=args.pool_ratio,
-                  lamb=args.lamb).to(device)
+                  lamb=args.lamb, sample=args.sample).to(device)
     args.num_feature = int(num_feature)
     args.num_classes = int(num_classes)
 
