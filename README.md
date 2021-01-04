@@ -73,3 +73,9 @@ python main.py --device ${your_device_id_here} --dataset ${your_dataset_name_her
 
 Performance
 -------------------------
+
+|                   | Mutagenicity | NCI109      | NCI1        |
+| ----------------- | ------------ | ----------- | ----------- |
+| Reported in Paper | 82.15(0.58)  | 80.67(1.16) | 78.45(0.77) |
+| Author's Code     | 79.68(1.68)  | 73.86(1.72) | 76.29(2.14) |
+| Ours              | 78.67(1.63)  | 72.80(2.96) | 74.06(2.34) |
