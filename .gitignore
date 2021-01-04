@@ -4,6 +4,8 @@
 # tests
 test.py
 dev_test.py
+test_utils.py
+_test_utils.py
 
 # python
 __pycache__/
