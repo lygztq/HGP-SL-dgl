@@ -122,10 +122,40 @@ def edge_sparsemax(graph:dgl.DGLGraph, logits, eids=ALL, norm_by="dst"):
         eids = astype(eids, graph.idtype)
         end_n_ids = end_n_ids[eids]
     return EdgeSparsemaxFunction.apply(graph._graph, logits,
-                               eids, end_n_ids, norm_by)
+                                       eids, end_n_ids, norm_by)
 
 
 class EdgeSparsemax(torch.nn.Module):
+    r"""
+    Description
+    -----------
+    Compute edge sparsemax. For a node :math:`i`, edge sparsemax is an operation that computes 
+
+    .. math::
+      a_{ij} = \text{ReLU}(z_{ij} - \tau(\z_{i,:}))
+    
+    where :math:`z_{ij}` is a signal of edge :math:`j\rightarrow i`, also
+    called logits in the context of sparsemax. :math:`\tau` is a function
+    that can be found at the `From Softmax to Sparsemax <https://arxiv.org/pdf/1602.02068.pdf>`
+    paper.
+
+    Parameters
+    ----------
+    graph : DGLGraph
+        The graph to perform edge sparsemax on.
+    logits : torch.Tensor
+        The input edge feature.
+    eids : torch.Tensor or ALL, optional
+        A tensor of edge index on which to apply edge sparsemax. If ALL, apply edge
+        sparsemax on all edges in the graph. Default: ALL.
+    norm_by : str, could be 'src' or 'dst'
+        Normalized by source nodes of destination nodes. Default: `dst`.
+
+    Returns
+    -------
+    Tensor
+        Sparsemax value.
+    """
     def __init__(self):
         super(EdgeSparsemax, self).__init__()
     
@@ -143,10 +173,16 @@ def _make_ix_like(input, dim=0):
 
 def _threshold_and_support(input, dim=0):
     """Sparsemax building block: compute the threshold
-    Args:
-        input: any dimension
-        dim: dimension along which to apply the sparsemax
-    Returns:
+    
+    Parameters
+    ----------
+    input : Tensor
+        any dimension
+    dim : int
+        dimension along which to apply the sparsemax
+    
+    Returns
+    -------
         the threshold value
     """
 

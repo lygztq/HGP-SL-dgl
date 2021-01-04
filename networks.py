@@ -1,4 +1,3 @@
-import dgl
 import torch
 from dgl.nn import AvgPooling, MaxPooling
 import torch.nn.functional as F
@@ -7,6 +6,7 @@ from layers import HGPSLPool, WeightedGraphConv, ConvPoolReadout
 
 
 class SimpleModel(torch.nn.Module):
+    """Simplified version of Model. It has fixed number of layers (3)."""
     def __init__(self, in_feat:int, out_feat:int, hid_feat:int,
                  dropout:float=0.0, pool_ratio:float=0.5,
                  sample:bool=False, sparse:bool=True, sl:bool=True,
@@ -60,6 +60,37 @@ class SimpleModel(torch.nn.Module):
 
 
 class Model(torch.nn.Module):
+    r"""
+
+    Description
+    -----------
+    The graph classification model using HGP-SL pooling.
+
+    Parameters
+    ----------
+    in_feat : int
+        The number of input node feature's channels.
+    out_feat : int
+        The number of output node feature's channels.
+    hid_feat : int
+        The number of hidden state's channels.
+    dropout : float, optional
+        The dropout rate. Default: 0
+    pool_ratio : float, optional
+        The pooling ratio for each pooling layer. Default: 0.5
+    conv_layers : int, optional
+        The number of graph convolution and pooling layers. Default: 3
+    sample : bool, optional
+        Whether use k-hop union graph to increase efficiency. 
+        Currently we only support full graph. Default: :obj:`False`
+    sparse : bool, optional
+        Use edge sparsemax instead of edge softmax. Default: :obj:`True`
+    sl : bool, optional
+        Use structure learining module or not. Default: :obj:`True`
+    lamb : float, optional
+        The lambda parameter as weight of raw adjacency as described in the
+        HGP-SL paper. Default: 1.0
+    """
     def __init__(self, in_feat:int, out_feat:int, hid_feat:int,
                  dropout:float=0., pool_ratio:float=.5, conv_layers:int=3,
                  sample:bool=False, sparse:bool=True, sl:bool=True,

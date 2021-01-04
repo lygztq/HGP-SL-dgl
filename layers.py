@@ -1,25 +1,29 @@
-import dgl
 import logging
-from dgl import DGLGraph
-import torch
-from torch import Tensor
-import torch.nn as nn
-from torch.nn import Parameter
-import torch.nn.functional as F
+
+import dgl
 import dgl.function as fn
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from dgl import DGLGraph
+from dgl.nn import AvgPooling, GraphConv, MaxPooling
 from dgl.ops import edge_softmax
-from dgl.nn import GraphConv, AvgPooling, MaxPooling
+from torch import Tensor
+from torch.nn import Parameter
 
 from functions import edge_sparsemax
 from utils import get_batch_id, topk
 
 
-def khop_union_graph(graph):
-    # pyg use spspmm here
+def _khop_union_graph(graph, k):
+    # pyg use spspmm here, however dgl has no
+    # efficient way to implement this function.
+    # Stub here.
     pass
 
 
 class WeightedGraphConv(GraphConv):
+    """GraphConv with edge weights on homogeneous graphs"""
     def forward(self, graph:DGLGraph, n_feat, e_feat=None):
         if e_feat is None:
             return super(WeightedGraphConv, self).forward(graph, n_feat)
@@ -40,6 +44,27 @@ class WeightedGraphConv(GraphConv):
 
 
 class NodeInfoScoreLayer(nn.Module):
+    r"""
+    Description
+    -----------
+    Compute a score for each node for sort-pooling. The score of each node
+    is computed via the absolute difference of its first-order random walk
+    result and its features.
+
+    Parameters
+    ----------
+    graph : DGLGraph
+        The graph to perform this operation.
+    feat : torch.Tensor
+        The node features
+    e_feat : torch.Tensor, optional
+        The edge features. Default: :obj:`None`
+    
+    Returns
+    -------
+    Tensor
+        Score for each node.
+    """
     def __init__(self, sym_norm:bool=True):
         super(NodeInfoScoreLayer, self).__init__()
         self.sym_norm = sym_norm
@@ -75,8 +100,47 @@ class NodeInfoScoreLayer(nn.Module):
 
 
 class HGPSLPool(nn.Module):
+    r"""
+
+    Description
+    -----------
+    The HGP-SL pooling layer from 
+    `Hierarchical Graph Pooling with Structure Learning <https://arxiv.org/pdf/1911.05954.pdf>`
+
+    Parameters
+    ----------
+    in_feat : int
+        The number of input node feature's channels
+    ratio : float, optional
+        Pooling ratio. Default: 0.8
+    sample : bool, optional
+        Whether use k-hop union graph to increase efficiency. 
+        Currently we only support full graph. Default: :obj:`False`
+    sym_score_norm : bool, optional
+        Use symmetric norm for adjacency or not. Default: :obj:`True`
+    sparse : bool, optional
+        Use edge sparsemax instead of edge softmax. Default: :obj:`True`
+    sl : bool, optional
+        Use structure learining module or not. Default: :obj:`True`
+    lamb : float, optional
+        The lambda parameter as weight of raw adjacency as described in the
+        HGP-SL paper. Default: 1.0
+    negative_slop : float, optional
+        Negative slop for leaky_relu. Default: 0.2
+    
+    Returns
+    -------
+    DGLGraph
+        The pooled graph.
+    torch.Tensor
+        Node features
+    torch.Tensor
+        Edge features
+    torch.Tensor
+        Permutation index
+    """
     def __init__(self, in_feat:int, ratio=0.8, sample=False, 
-                 sym_score_norm=True, sparse=False, sl=True,
+                 sym_score_norm=True, sparse=True, sl=True,
                  lamb=1.0, negative_slop=0.2, k_hop=3):
         super(HGPSLPool, self).__init__()
         self.in_feat = in_feat
@@ -183,6 +247,7 @@ class HGPSLPool(nn.Module):
 
 
 class ConvPoolReadout(torch.nn.Module):
+    """A helper class. (GraphConv -> Pooling -> Readout)"""
     def __init__(self, in_feat:int, out_feat:int, pool_ratio=0.8,
                  sample:bool=False, sparse:bool=True, sl:bool=True,
                  lamb:float=1., pool:bool=True):
