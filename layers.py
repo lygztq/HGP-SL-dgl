@@ -188,9 +188,11 @@ class HGPSLPool(nn.Module):
             row, col = graph.all_edges()
             num_nodes = graph.num_nodes()
 
-            scipy_adj = scipy.sparse.coo_matrix((raw_e_feat, (row, col)), shape=(num_nodes, num_nodes))
+            scipy_adj = scipy.sparse.coo_matrix((raw_e_feat.detach().cpu(), (row.detach().cpu(), col.detach().cpu())), shape=(num_nodes, num_nodes))
             for _ in range(self.k_hop):
-                scipy_adj = scipy_adj ** 2 + scipy_adj
+                two_hop = scipy_adj ** 2
+                two_hop = two_hop * (1e-5 / two_hop.max())
+                scipy_adj = two_hop + scipy_adj
             row, col = scipy_adj.nonzero()
             row = torch.tensor(row, dtype=torch.long, device=graph.device)
             col = torch.tensor(col, dtype=torch.long, device=graph.device)
@@ -207,16 +209,17 @@ class HGPSLPool(nn.Module):
 
             # add remaining self loops
             mask = row != col
+            num_nodes = perm.size(0) # num nodes after pool
             loop_index = torch.arange(0, num_nodes, dtype=row.dtype, device=row.device)
-            row, col = row[mask], col[mask]
-            row = torch.cat([row, loop_index], dim=0)
-            col = torch.cat([col, loop_index], dim=0)
             inv_mask = ~mask
             loop_weight = torch.full((num_nodes, ), 0, dtype=e_feat.dtype, device=e_feat.device)
             remaining_e_feat = e_feat[inv_mask]
             if remaining_e_feat.numel() > 0:
                 loop_weight[row[inv_mask]] = remaining_e_feat
             e_feat = torch.cat([e_feat[mask], loop_weight], dim=0)
+            row, col = row[mask], col[mask]
+            row = torch.cat([row, loop_index], dim=0)
+            col = torch.cat([col, loop_index], dim=0)
 
             # attention scores
             weights = (torch.cat([feat[row], feat[col]], dim=1) * self.att).sum(dim=-1)
@@ -230,9 +233,8 @@ class HGPSLPool(nn.Module):
                 weights = edge_softmax(sl_graph, weights)
             
             # get final graph
-            mask = torch.abs(weights) > 1e-9
-            row, col = row[mask], col[mask]
-            weights = weights[mask]
+            mask = torch.abs(weights) > 0
+            row, col, weights = row[mask], col[mask], weights[mask]
             pool_graph = dgl.graph((row, col))
             pool_graph.set_batch_num_nodes(next_batch_num_nodes)
             e_feat = weights
@@ -265,6 +267,8 @@ class HGPSLPool(nn.Module):
             pool_row, pool_col = pool_graph.all_edges()
             dense_adj[pool_row, pool_col] += self.lamb * e_feat
             weights = dense_adj[row, col]
+            del dense_adj
+            torch.cuda.empty_cache()
 
             # edge softmax/sparsemax
             complete_graph = dgl.graph((row, col))
@@ -279,8 +283,6 @@ class HGPSLPool(nn.Module):
             e_feat = weights
             pool_graph = dgl.graph((row, col))
             pool_graph.set_batch_num_nodes(next_batch_num_nodes)
-            del dense_adj
-            torch.cuda.empty_cache()
 
         return pool_graph, feat, e_feat, perm
 

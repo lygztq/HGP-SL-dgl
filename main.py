@@ -65,20 +65,20 @@ def parse_args():
     if args.print_every == -1:
         args.print_every = args.epochs + 1
 
-    # paths
-    if not os.path.exists(args.dataset_path):
-        os.makedirs(args.dataset_path)
-    if not os.path.exists(args.output_path):
-        os.makedirs(args.output_path)
-    name = "Data={}_Hidden={}_Pool={}_WeightDecay={}_Lr={}.log".format(
-        args.dataset, args.hid_dim, args.pool_ratio, args.weight_decay, args.lr)
-    args.output_path = os.path.join(args.output_path, name)
-
     # bool args
     if args.sample.lower() == "true":
         args.sample = True
     else:
         args.sample = False
+
+    # paths
+    if not os.path.exists(args.dataset_path):
+        os.makedirs(args.dataset_path)
+    if not os.path.exists(args.output_path):
+        os.makedirs(args.output_path)
+    name = "Data={}_Hidden={}_Pool={}_WeightDecay={}_Lr={}_Sample={}.log".format(
+        args.dataset, args.hid_dim, args.pool_ratio, args.weight_decay, args.lr, args.sample)
+    args.output_path = os.path.join(args.output_path, name)
 
     return args
 

@@ -66,8 +66,11 @@ def _threshold_and_support_graph(gidx:HeteroGraphIndex, scores:Tensor, end_n_ids
     support = support[reverse_perm]
 
     support_size = _gspmm(gidx, "copy_rhs", "sum", None, support.float())[0]
-    support_size = support_size.long()
+    support_size = support_size.long().clamp(min=1)
     idx = support_size + cum_in_degrees - 1
+    # mask invalid index, for example, if batch is not start from 0 or not continuous, it may result in negative index
+    mask = idx < 0
+    idx[mask] = 0
     tau = cumsum_scores.gather(0, idx.long())
     tau /= support_size.to(scores.dtype)
 
