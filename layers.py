@@ -76,6 +76,7 @@ class NodeInfoScoreLayer(nn.Module):
                 
                 graph.ndata["h"] = src_feat
                 graph.edata["e"] = e_feat
+                graph = dgl.remove_self_loop(graph)
                 graph.update_all(fn.src_mul_edge("h", "e", "m"), fn.sum("m", "h"))
                 
                 dst_feat = graph.ndata.pop("h") * dst_norm
@@ -86,6 +87,7 @@ class NodeInfoScoreLayer(nn.Module):
 
                 graph.ndata["h"] = feat
                 graph.edata["e"] = e_feat
+                graph = dgl.remove_self_loop(graph)
                 graph.update_all(fn.src_mul_edge("h", "e", "m"), fn.sum("m", "h"))
 
                 feat = feat - dst_norm * graph.ndata.pop("h")
@@ -160,14 +162,16 @@ class HGPSLPool(nn.Module):
         if e_feat is None:
             e_feat = torch.ones((graph.number_of_edges(),), 
                                 dtype=feat.dtype, device=feat.device)
-        x_score = self.calc_info_score(graph, feat, e_feat)
         batch_num_nodes = graph.batch_num_nodes()
+        x_score = self.calc_info_score(graph, feat, e_feat)
         perm, next_batch_num_nodes = topk(x_score, self.ratio, 
                                           get_batch_id(batch_num_nodes),
                                           batch_num_nodes)
         feat = feat[perm]
+        pool_graph = None
+        if not self.sample or not self.sl:
+            # pool graph
         graph.edata["e"] = e_feat
-        raw_e_feat = e_feat
         pool_graph = dgl.node_subgraph(graph, perm)
         e_feat = pool_graph.edata.pop("e")
         pool_graph.set_batch_num_nodes(next_batch_num_nodes)
@@ -188,7 +192,7 @@ class HGPSLPool(nn.Module):
             row, col = graph.all_edges()
             num_nodes = graph.num_nodes()
 
-            scipy_adj = scipy.sparse.coo_matrix((raw_e_feat.detach().cpu(), (row.detach().cpu(), col.detach().cpu())), shape=(num_nodes, num_nodes))
+            scipy_adj = scipy.sparse.coo_matrix((e_feat.detach().cpu(), (row.detach().cpu(), col.detach().cpu())), shape=(num_nodes, num_nodes))
             for _ in range(self.k_hop):
                 two_hop = scipy_adj ** 2
                 two_hop = two_hop * (1e-5 / two_hop.max())
@@ -243,7 +247,7 @@ class HGPSLPool(nn.Module):
             # Learning the possible edge weights between each pair of
             # nodes in the pooled subgraph, relative slower.
 
-            # first construct complete graphs for all graph in the batch
+            # construct complete graphs for all graph in the batch
             # use dense to build, then transform to sparse.
             # maybe there's more efficient way?
             batch_num_nodes = next_batch_num_nodes

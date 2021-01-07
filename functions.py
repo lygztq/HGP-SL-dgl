@@ -40,7 +40,10 @@ def _neighbor_sort(scores:Tensor, end_n_ids:Tensor, in_degrees:Tensor, cum_in_de
     dense_scores[index] = scores
     dense_scores = dense_scores.view(num_nodes, max_in_degree)
 
-    sorted_dense_scores, _ = dense_scores.sort(dim=-1, descending=True)
+    sorted_dense_scores, dense_reverse_perm = dense_scores.sort(dim=-1, descending=True)
+    _, dense_reverse_perm = torch.sort(dense_reverse_perm, dim=-1)
+    dense_reverse_perm = dense_reverse_perm + cum_in_degrees.view(-1, 1)
+    dense_reverse_perm = dense_reverse_perm.view(-1)
     cumsum_sorted_dense_scores = sorted_dense_scores.cumsum(dim=-1).view(-1)
     sorted_dense_scores = sorted_dense_scores.view(-1)
     arange_vec = torch.arange(1, max_in_degree + 1, dtype=torch.long, device=end_n_ids.device)
@@ -50,8 +53,9 @@ def _neighbor_sort(scores:Tensor, end_n_ids:Tensor, in_degrees:Tensor, cum_in_de
     sorted_scores = sorted_dense_scores[valid_mask]
     cumsum_sorted_scores = cumsum_sorted_dense_scores[valid_mask]
     arange_vec = arange_vec[valid_mask]
+    dense_reverse_perm = dense_reverse_perm[valid_mask].long()
 
-    return sorted_scores, cumsum_sorted_scores, arange_vec, reverse_perm
+    return sorted_scores, cumsum_sorted_scores, arange_vec, reverse_perm, dense_reverse_perm
 
 
 def _threshold_and_support_graph(gidx:HeteroGraphIndex, scores:Tensor, end_n_ids:Tensor):
@@ -59,14 +63,15 @@ def _threshold_and_support_graph(gidx:HeteroGraphIndex, scores:Tensor, end_n_ids
     in_degrees = _gspmm(gidx, "copy_rhs", "sum", None, torch.ones_like(scores))[0]
     cum_in_degrees = torch.cat([in_degrees.new_zeros(1), in_degrees.cumsum(dim=0)[:-1]], dim=0)
     
-    sorted_scores, cumsum_scores, rhos, reverse_perm = _neighbor_sort(scores, end_n_ids, 
-                                                                      in_degrees, cum_in_degrees)
+    sorted_scores, cumsum_scores, rhos, reverse_perm, dense_reverse_perm = _neighbor_sort(scores, end_n_ids, 
+                                                                                          in_degrees, cum_in_degrees)
     cumsum_scores = cumsum_scores - 1.
     support = rhos * sorted_scores > cumsum_scores
+    support = support[dense_reverse_perm]
     support = support[reverse_perm]
 
     support_size = _gspmm(gidx, "copy_rhs", "sum", None, support.float())[0]
-    support_size = support_size.long().clamp(min=1)
+    support_size = support_size.long()
     idx = support_size + cum_in_degrees - 1
     # mask invalid index, for example, if batch is not start from 0 or not continuous, it may result in negative index
     mask = idx < 0
@@ -119,7 +124,7 @@ class EdgeSparsemaxFunction(Function):
 
 
 def edge_sparsemax(graph:dgl.DGLGraph, logits, eids=ALL, norm_by="dst"):
-    row, col = graph.all_edges(order="srcdst")
+    row, col = graph.all_edges(order="eid")
     assert norm_by in ["dst", "src"]
     end_n_ids = col if norm_by == "dst" else row
     if not is_all(eids):
