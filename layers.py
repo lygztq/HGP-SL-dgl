@@ -171,10 +171,10 @@ class HGPSLPool(nn.Module):
         pool_graph = None
         if not self.sample or not self.sl:
             # pool graph
-        graph.edata["e"] = e_feat
-        pool_graph = dgl.node_subgraph(graph, perm)
-        e_feat = pool_graph.edata.pop("e")
-        pool_graph.set_batch_num_nodes(next_batch_num_nodes)
+            graph.edata["e"] = e_feat
+            pool_graph = dgl.node_subgraph(graph, perm)
+            e_feat = pool_graph.edata.pop("e")
+            pool_graph.set_batch_num_nodes(next_batch_num_nodes)
 
         # no structure learning layer, directly return.
         if not self.sl:
