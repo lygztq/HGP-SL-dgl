@@ -24,6 +24,8 @@ class WeightedGraphConv(GraphConv):
             return super(WeightedGraphConv, self).forward(graph, n_feat)
         
         with graph.local_scope():
+            if self.weight is not None:
+                n_feat = torch.matmul(n_feat, self.weight)
             src_norm = torch.pow(graph.out_degrees().float().clamp(min=1), -0.5)
             src_norm = src_norm.view(-1, 1)
             dst_norm = torch.pow(graph.in_degrees().float().clamp(min=1), -0.5)
@@ -35,6 +37,10 @@ class WeightedGraphConv(GraphConv):
                              fn.sum("m", "h"))
             n_feat = graph.ndata.pop("h")
             n_feat = n_feat * dst_norm
+            if self.bias is not None:
+                n_feat = n_feat + self.bias
+            if self._activation is not None:
+                n_feat = self._activation(n_feat)
             return n_feat
 
 
