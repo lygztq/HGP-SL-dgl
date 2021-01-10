@@ -74,8 +74,26 @@ python main.py --device ${your_device_id_here} --dataset ${your_dataset_name_her
 Performance
 -------------------------
 
-|                   | Mutagenicity | NCI109      | NCI1        |
-| ----------------- | ------------ | ----------- | ----------- |
-| Reported in Paper | 82.15(0.58)  | 80.67(1.16) | 78.45(0.77) |
-| Author's Code     | 79.68(1.68)  | 73.86(1.72) | 76.29(2.14) |
-| Ours              | 78.67(1.63)  | 72.80(2.96) | 74.06(2.34) |
+**Accuracy**
+
+|                            | Mutagenicity | NCI109      | NCI1        | DD          |
+| -------------------------- | ------------ | ----------- | ----------- | ----------- |
+| Reported in Paper          | 82.15(0.58)  | 80.67(1.16) | 78.45(0.77) | 80.96(1.26) |
+| Author's Code (full graph) | 78.44(2.10)  | 74.44(2.05) | 77.37(2.09) | OOM         |
+| Author's Code (sample)     | 79.68(1.68)  | 73.86(1.72) | 76.29(2.14) | 75.46(3.86) |
+| DGL (full graph)           | 79.52(2.21)  | 74.86(1.99) | 74.62(2.22) | OOM         |
+| DGL (sample)               | 79.15(1.62)  | 75.39(1.86) | 73.77(2.04) | 76.47(2.14) |
+
+
+**Speed**
+
+Device: Tesla V100-SXM2 16GB
+
+In seconds
+
+|                               | DD(batchsize=64), large graph | Mutagenicity(batchsize=512), small graph |
+| ----------------------------- | ----------------------------- | ---------------------------------------- |
+| Author's code (sample)        | 9.96                          | 12.91                                    |
+| Author's code (full graph)    | OOM                           | 13.03                                    |
+| DGL (sample)                  | 9.50                          | 3.59                                     |
+| DGL (full graph)              | OOM                           | 3.56                                     |
