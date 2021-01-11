@@ -86,6 +86,7 @@ def parse_args():
 def train(model:torch.nn.Module, optimizer, trainloader, device):
     model.train()
     total_loss = 0.
+    num_batches = len(trainloader)
     for batch in trainloader:
         optimizer.zero_grad()
         batch_graphs, batch_labels = batch
@@ -98,7 +99,7 @@ def train(model:torch.nn.Module, optimizer, trainloader, device):
 
         total_loss += loss.item()
     
-    return total_loss / len(trainloader.dataset)
+    return total_loss / num_batches
 
 
 @torch.no_grad()
