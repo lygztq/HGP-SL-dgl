@@ -63,16 +63,18 @@ def _threshold_and_support_graph(gidx:HeteroGraphIndex, scores:Tensor, end_n_ids
     in_degrees = _gspmm(gidx, "copy_rhs", "sum", None, torch.ones_like(scores))[0]
     cum_in_degrees = torch.cat([in_degrees.new_zeros(1), in_degrees.cumsum(dim=0)[:-1]], dim=0)
     
+    # perform sort on edges for each node
     sorted_scores, cumsum_scores, rhos, reverse_perm, dense_reverse_perm = _neighbor_sort(scores, end_n_ids, 
                                                                                           in_degrees, cum_in_degrees)
     cumsum_scores = cumsum_scores - 1.
     support = rhos * sorted_scores > cumsum_scores
-    support = support[dense_reverse_perm]
-    support = support[reverse_perm]
+    support = support[dense_reverse_perm] # from sorted order to unsorted order
+    support = support[reverse_perm]       # from src-dst order to eid order
 
     support_size = _gspmm(gidx, "copy_rhs", "sum", None, support.float())[0]
     support_size = support_size.long()
     idx = support_size + cum_in_degrees - 1
+
     # mask invalid index, for example, if batch is not start from 0 or not continuous, it may result in negative index
     mask = idx < 0
     idx[mask] = 0
@@ -83,6 +85,15 @@ def _threshold_and_support_graph(gidx:HeteroGraphIndex, scores:Tensor, end_n_ids
 
 
 class EdgeSparsemaxFunction(Function):
+    r"""
+    Description
+    -----------
+    Pytorch Auto-Grad Function for edge sparsemax. 
+    
+    We define this auto-grad function here since
+    sparsemax involves sort and select, which are
+    not derivative.
+    """
     @staticmethod
     def forward(ctx, gidx:HeteroGraphIndex, scores:Tensor, 
                 eids:Tensor, end_n_ids:Tensor, norm_by:str):
@@ -124,6 +135,41 @@ class EdgeSparsemaxFunction(Function):
 
 
 def edge_sparsemax(graph:dgl.DGLGraph, logits, eids=ALL, norm_by="dst"):
+    r"""
+    Description
+    -----------
+    Compute edge sparsemax. For a node :math:`i`, edge sparsemax is an operation that computes 
+
+    .. math::
+      a_{ij} = \text{ReLU}(z_{ij} - \tau(\z_{i,:}))
+    
+    where :math:`z_{ij}` is a signal of edge :math:`j\rightarrow i`, also
+    called logits in the context of sparsemax. :math:`\tau` is a function
+    that can be found at the `From Softmax to Sparsemax <https://arxiv.org/pdf/1602.02068.pdf>`
+    paper.
+
+    NOTE: currently only homogeneous graphs are supported.
+
+    Parameters
+    ----------
+    graph : DGLGraph
+        The graph to perform edge sparsemax on.
+    logits : torch.Tensor
+        The input edge feature.
+    eids : torch.Tensor or ALL, optional
+        A tensor of edge index on which to apply edge sparsemax. If ALL, apply edge
+        sparsemax on all edges in the graph. Default: ALL.
+    norm_by : str, could be 'src' or 'dst'
+        Normalized by source nodes of destination nodes. Default: `dst`.
+
+    Returns
+    -------
+    Tensor
+        Sparsemax value.
+    """
+    # we get edge index tensors here since it is
+    # hard to get edge index with HeteroGraphIndex
+    # object without other information like edge_type.
     row, col = graph.all_edges(order="eid")
     assert norm_by in ["dst", "src"]
     end_n_ids = col if norm_by == "dst" else row
@@ -160,6 +206,8 @@ class EdgeSparsemax(torch.nn.Module):
     norm_by : str, could be 'src' or 'dst'
         Normalized by source nodes of destination nodes. Default: `dst`.
 
+    NOTE: currently only homogeneous graphs are supported.
+
     Returns
     -------
     Tensor
@@ -172,6 +220,7 @@ class EdgeSparsemax(torch.nn.Module):
         return edge_sparsemax(graph, logits, eids, norm_by)
 
 
+####### Below are functions and classes for dense cases #########
 def _make_ix_like(input, dim=0):
     d = input.size(dim)
     rho = torch.arange(1, d + 1, device=input.device, dtype=input.dtype)

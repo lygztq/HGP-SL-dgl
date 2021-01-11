@@ -18,7 +18,21 @@ from utils import get_batch_id, topk
 
 
 class WeightedGraphConv(GraphConv):
-    """GraphConv with edge weights on homogeneous graphs"""
+    r"""
+    Description
+    -----------
+    GraphConv with edge weights on homogeneous graphs.
+    If edge weights are not given, directly call GraphConv instead.
+
+    Parameters
+    ----------
+    graph : DGLGraph
+        The graph to perform this operation.
+    n_feat : torch.Tensor
+        The node features
+    e_feat : torch.Tensor, optional
+        The edge features. Default: :obj:`None`
+    """
     def forward(self, graph:DGLGraph, n_feat, e_feat=None):
         if e_feat is None:
             return super(WeightedGraphConv, self).forward(graph, n_feat)
@@ -51,6 +65,12 @@ class NodeInfoScoreLayer(nn.Module):
     Compute a score for each node for sort-pooling. The score of each node
     is computed via the absolute difference of its first-order random walk
     result and its features.
+
+    Arguments
+    ---------
+    sym_norm : bool, optional
+        If true, use symmetric norm for adjacency.
+        Default: :obj:`True`
 
     Parameters
     ----------
